@@ -20,8 +20,6 @@ load_dotenv()
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip().lstrip("-").isdigit()]
-BANNER_FILE = os.environ.get("BANNER_FILE", "banner.png")
-BANNER_URL = os.environ.get("BANNER_URL", "")
 
 if not BOT_TOKEN:
     raise SystemExit("❌ BOT_TOKEN تنظیم نشده.")
@@ -35,6 +33,7 @@ MAX_BET = 3000
 MAX_ROLLS = 3
 START_BALANCE = 500
 UNIT = "داگز"
+CHALLENGE_TIMEOUT = 120  # ثانیه
 
 FORCE_CHANNELS = [
     {"name": "📢 کانال اصلی", "username": "@BET_1XZX", "url": "https://t.me/BET_1XZX"},
@@ -159,6 +158,27 @@ def parse_game_cmd(text: str):
     if not (MIN_BET <= bet <= MAX_BET): return None
     return game, count, bet
 
+# ================= Helpers =================
+def fmt(n): return f"{n:,}"
+
+def safe(s):
+    """اسم کاربر رو برای Markdown امن می‌کنه."""
+    if not s:
+        return ""
+    for ch in ["_", "*", "`", "[", "]"]:
+        s = s.replace(ch, f"\\{ch}")
+    return s
+
+async def ensure_user(update: Update):
+    u = update.effective_user
+    if u:
+        create_user(u.id, u.username, u.first_name)
+    return u
+
+async def roll_dice(context: ContextTypes.DEFAULT_TYPE, chat_id: int, game: G):
+    msg = await context.bot.send_dice(chat_id=chat_id, emoji=EMOJI[game])
+    return msg.dice.value
+
 # ================= Keyboards =================
 def private_menu():
     return InlineKeyboardMarkup([
@@ -205,34 +225,6 @@ def admin_panel():
 def admin_back():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data="adm:panel")]])
 
-# ================= Helpers =================
-def fmt(n): return f"{n:,}"
-
-async def ensure_user(update: Update):
-    u = update.effective_user
-    if u:
-        create_user(u.id, u.username, u.first_name)
-    return u
-
-async def roll_dice(context: ContextTypes.DEFAULT_TYPE, chat_id: int, game: G):
-    msg = await context.bot.send_dice(chat_id=chat_id, emoji=EMOJI[game])
-    return msg.dice.value
-
-async def send_banner(context, chat_id: int, caption: str):
-    try:
-        if BANNER_URL:
-            await context.bot.send_photo(chat_id=chat_id, photo=BANNER_URL,
-                                         caption=caption, parse_mode=ParseMode.MARKDOWN)
-            return
-        if os.path.exists(BANNER_FILE):
-            with open(BANNER_FILE, "rb") as f:
-                await context.bot.send_photo(chat_id=chat_id, photo=f,
-                                             caption=caption, parse_mode=ParseMode.MARKDOWN)
-            return
-    except Exception as e:
-        log.warning(f"banner send failed: {e}")
-    await context.bot.send_message(chat_id=chat_id, text=caption, parse_mode=ParseMode.MARKDOWN)
-
 # ================= Membership =================
 async def check_membership(context, user_id: int) -> bool:
     for ch in FORCE_CHANNELS:
@@ -257,12 +249,25 @@ async def require_membership(update: Update, context) -> bool:
         "\n\nبعد از عضویت، دکمه «✅ عضو شدم» رو بزن."
     )
     try:
-        await update.effective_message.reply_text(
-            txt, reply_markup=join_channels_kb(),
-            parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+        await context.bot.send_message(
+            chat_id=u.id, text=txt,
+            reply_markup=join_channels_kb(),
+            parse_mode=ParseMode.MARKDOWN,
+            disable_web_page_preview=True)
+        if update.effective_chat.type != ChatType.PRIVATE:
+            try:
+                await update.effective_message.reply_text(
+                    f"🔒 {safe(u.first_name)} جان، برای بازی اول توی پیوی ربات رو چک کن!")
+            except: pass
+        return False
     except Exception:
-        pass
-    return False
+        try:
+            await update.effective_message.reply_text(
+                txt, reply_markup=join_channels_kb(),
+                parse_mode=ParseMode.MARKDOWN,
+                disable_web_page_preview=True)
+        except: pass
+        return False
 
 async def check_join_cb(update: Update, context):
     q = update.callback_query
@@ -319,8 +324,26 @@ def build_waiting_text(st):
         f"🎯 **{st['creator_name']}** رول کرد و امتیازش **{sum(st['creator_rolls'])}** شد!\n"
         f"💰 شرط: **{fmt(st['bet'])}** {UNIT}  |  🎲 پرتاب: **{st['rolls_count']}**\n\n"
         f"کی حاضره به چالش بکشه؟ 🤝\n"
-        f"(امتیاز بیشتر بیار تا **{fmt(st['bet']*2)}** {UNIT} ببری!)"
+        f"(امتیاز بیشتر بیار تا **{fmt(st['bet']*2)}** {UNIT} ببری!)\n\n"
+        f"⏰ این چالش ۲ دقیقه دیگه منقضی می‌شه."
     )
+
+# ================= Auto cancel =================
+async def auto_cancel_after(context, gid: str, seconds: int):
+    await asyncio.sleep(seconds)
+    st = context.bot_data.get("games", {}).get(gid)
+    if not st or st["phase"] != "waiting_join":
+        return
+    if st.get("bet_paid"):
+        add_balance(st["creator_id"], st["bet"])
+    try:
+        await context.bot.edit_message_text(
+            chat_id=st["chat_id"],
+            message_id=st.get("message_id"),
+            text="⏰ زمان چالش تموم شد و لغو شد. شرط برگشت داده شد.")
+    except Exception as e:
+        log.warning(f"auto cancel edit failed: {e}")
+    context.bot_data["games"].pop(gid, None)
 
 # ================= Commands =================
 async def cmd_start(update: Update, context):
@@ -339,7 +362,7 @@ async def cmd_start(update: Update, context):
 
         bal = get_balance(u.id)
         text = (
-            f"👋 سلام **{u.first_name}**!\n\n"
+            f"👋 سلام **{safe(u.first_name)}**!\n\n"
             "به **«داگز موج بات»** خوش اومدی 🎉\n\n"
             f"💰 موجودی فعلی: **{fmt(bal)} {UNIT}**\n\n"
             "⚠️ بازی‌ها فقط توی **گروه** انجام می‌شن.\n"
@@ -383,7 +406,7 @@ async def cmd_profile(update: Update, context):
     row = get_user(u.id)
     wr = round((row["total_wins"] / row["total_bets"]) * 100, 1) if row["total_bets"] else 0
     text = (
-        f"👤 **پروفایل {u.first_name}**\n\n"
+        f"👤 **پروفایل {safe(u.first_name)}**\n\n"
         f"🆔 آیدی: `{u.id}`\n"
         f"💰 موجودی: **{fmt(row['balance'])}** {UNIT}\n"
         f"🎮 تعداد بازی: **{row['total_bets']}**\n"
@@ -452,17 +475,18 @@ async def start_game_from_command(update, context, parsed, u):
             parse_mode=ParseMode.MARKDOWN)
         return
 
-    caption = (
+    text = (
         f"🎮 بازی **{NAME_FA[game]}** {EMOJI[game]}\n\n"
         f"💰 شرط: **{fmt(bet)}** {UNIT}\n"
         f"🎲 تعداد پرتاب: **{count}**\n"
-        f"👤 سازنده: **{u.first_name}**\n"
-        f"💼 موجودی تو: **{fmt(bal)}** {UNIT}"
+        f"👤 سازنده: **{safe(u.first_name)}**\n"
+        f"💼 موجودی تو: **{fmt(bal)}** {UNIT}\n\n"
+        f"👇 حالت بازی رو انتخاب کن:"
     )
-    await send_banner(context, update.message.chat_id, caption)
     await update.message.reply_text(
-        "👇 حالت بازی رو انتخاب کن:",
-        reply_markup=mode_kb(game, count, bet))
+        text,
+        reply_markup=mode_kb(game, count, bet),
+        parse_mode=ParseMode.MARKDOWN)
 
 # ================= Callbacks =================
 async def init_cb(update, context):
@@ -489,22 +513,26 @@ async def init_cb(update, context):
         await q.answer("❌ موجودی کافی نداری!", show_alert=True)
         return
 
-    add_balance(u.id, -bet)
     gid = uuid.uuid4().hex[:8]
     st = {
         "id": gid, "chat_id": q.message.chat_id,
+        "message_id": q.message.message_id,
         "game": game, "rolls_count": count, "bet": bet, "mode": mode,
         "phase": "creator_rolling",
-        "creator_id": u.id, "creator_name": u.first_name, "creator_rolls": [],
+        "creator_id": u.id, "creator_name": safe(u.first_name), "creator_rolls": [],
         "opponent_id": None, "opponent_name": None, "opponent_rolls": [],
+        "bet_paid": False,
     }
     context.bot_data.setdefault("games", {})[gid] = st
 
     await q.answer()
-    await q.edit_message_text(
-        build_roll_text(st),
-        reply_markup=roll_kb(gid, 0, count),
-        parse_mode=ParseMode.MARKDOWN)
+    try:
+        await q.edit_message_text(
+            build_roll_text(st) + "\n\n💡 دکمه رول که زدی، شرط کسر می‌شه.",
+            reply_markup=roll_kb(gid, 0, count),
+            parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        log.warning(f"init edit failed: {e}")
 
 async def roll_cb(update, context):
     q = update.callback_query
@@ -534,6 +562,20 @@ async def roll_cb(update, context):
         await q.answer("این بازی در حال انجام نیست.", show_alert=True)
         return
 
+    # ✅ کسر شرط فقط برای سازنده و فقط یکبار
+    if who == "creator" and not st.get("bet_paid"):
+        bal = get_balance(u.id)
+        if bal < st["bet"]:
+            await q.answer("❌ موجودی کافی نداری!", show_alert=True)
+            context.bot_data["games"].pop(gid, None)
+            try:
+                await q.edit_message_text(
+                    f"❌ بازی لغو شد چون موجودی {st['creator_name']} کافی نبود.")
+            except: pass
+            return
+        add_balance(u.id, -st["bet"])
+        st["bet_paid"] = True
+
     await q.answer()
     value = await roll_dice(context, st["chat_id"], st["game"])
 
@@ -547,18 +589,23 @@ async def roll_cb(update, context):
     need = st["rolls_count"]
 
     if len(rolls) < need:
-        await q.edit_message_text(
-            build_roll_text(st),
-            reply_markup=roll_kb(gid, len(rolls), need),
-            parse_mode=ParseMode.MARKDOWN)
+        try:
+            await q.edit_message_text(
+                build_roll_text(st),
+                reply_markup=roll_kb(gid, len(rolls), need),
+                parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            log.warning(f"roll edit failed: {e}")
         return
 
     if st["phase"] == "creator_rolling":
         if st["mode"] == "bot":
             st["phase"] = "bot_turn"
-            await q.edit_message_text(
-                build_roll_text(st) + "\n\n🤖 ربات داره می‌ریزه...",
-                parse_mode=ParseMode.MARKDOWN)
+            try:
+                await q.edit_message_text(
+                    build_roll_text(st) + "\n\n🤖 ربات داره می‌ریزه...",
+                    parse_mode=ParseMode.MARKDOWN)
+            except: pass
             for _ in range(need):
                 v = await roll_dice(context, st["chat_id"], st["game"])
                 st["opponent_rolls"].append(v)
@@ -566,10 +613,14 @@ async def roll_cb(update, context):
             await finish_game(context, q, st, gid)
         else:
             st["phase"] = "waiting_join"
-            await q.edit_message_text(
-                build_waiting_text(st),
-                reply_markup=join_kb(gid),
-                parse_mode=ParseMode.MARKDOWN)
+            try:
+                await q.edit_message_text(
+                    build_waiting_text(st),
+                    reply_markup=join_kb(gid),
+                    parse_mode=ParseMode.MARKDOWN)
+            except Exception as e:
+                log.warning(f"waiting_join edit failed: {e}")
+            asyncio.create_task(auto_cancel_after(context, gid, CHALLENGE_TIMEOUT))
         return
 
     if st["phase"] == "opponent_rolling":
@@ -599,14 +650,18 @@ async def join_cb(update, context):
 
     add_balance(u.id, -st["bet"])
     st["opponent_id"] = u.id
-    st["opponent_name"] = u.first_name
+    st["opponent_name"] = safe(u.first_name)
     st["phase"] = "opponent_rolling"
+    st["bet_paid"] = True
 
     await q.answer()
-    await q.edit_message_text(
-        build_roll_text(st),
-        reply_markup=roll_kb(gid, 0, st["rolls_count"]),
-        parse_mode=ParseMode.MARKDOWN)
+    try:
+        await q.edit_message_text(
+            build_roll_text(st),
+            reply_markup=roll_kb(gid, 0, st["rolls_count"]),
+            parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        log.warning(f"join edit failed: {e}")
 
 async def cancel_cb(update, context):
     q = update.callback_query
@@ -619,7 +674,8 @@ async def cancel_cb(update, context):
     if st["creator_id"] != u.id:
         await q.answer("فقط سازنده می‌تونه لغو کنه.", show_alert=True)
         return
-    add_balance(st["creator_id"], st["bet"])
+    if st.get("bet_paid"):
+        add_balance(st["creator_id"], st["bet"])
     context.bot_data["games"].pop(gid, None)
     await q.answer("لغو شد و شرطت برگشت.")
     try: await q.edit_message_text("❌ بازی لغو شد و شرط برگشت داده شد.")
@@ -668,7 +724,10 @@ async def finish_game(context, q, st, gid):
     else:
         lines.append("🤝 مساوی! شرط هر دو طرف برگشت داده شد.")
 
-    await q.edit_message_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+    try:
+        await q.edit_message_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        log.warning(f"finish edit failed: {e}")
     context.bot_data["games"].pop(gid, None)
 
 async def user_info_cb(update, context):
@@ -692,7 +751,7 @@ async def user_info_cb(update, context):
         c = db(); k = c.cursor()
         k.execute("SELECT first_name, balance FROM users ORDER BY balance DESC LIMIT 10")
         rows = k.fetchall(); c.close()
-        txt = "🏆 **برترین‌ها**\n\n"
+        txt = "🏆 برترین‌ها\n\n"
         for i, r in enumerate(rows, 1):
             txt += f"{i}. {r['first_name']} — {fmt(r['balance'])} {UNIT}\n"
         await q.answer(txt, show_alert=True)
