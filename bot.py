@@ -11,31 +11,25 @@ from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode, ChatType
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ContextTypes, filters,
+    Application, CommandHandler, MessageHandler,
+    CallbackQueryHandler, ContextTypes, filters,
 )
 
-# ================= Config =================
+# ═══════════════════ Config ═══════════════════
 load_dotenv()
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip().lstrip("-").isdigit()]
 
 if not BOT_TOKEN:
-    print("=" * 50)
     print("❌ BOT_TOKEN توی .env پیدا نشد!")
-    print("=" * 50)
     raise SystemExit(1)
 if not ADMIN_IDS:
-    print("=" * 50)
     print("❌ ADMIN_IDS توی .env پیدا نشد!")
-    print("=" * 50)
     raise SystemExit(1)
 
-print("=" * 50)
-print(f"✅ توکن پیدا شد (طول: {len(BOT_TOKEN)})")
+print(f"✅ توکن: طول {len(BOT_TOKEN)}")
 print(f"✅ ادمین‌ها: {ADMIN_IDS}")
-print("=" * 50)
 
 CHANNEL_USERNAME = "@BET_1XZX"
 MIN_WITHDRAW = 2000
@@ -51,15 +45,12 @@ FORCE_CHANNELS = [
     {"name": "💬 گپ بازی", "username": "@GAP_BAZIN1", "url": "https://t.me/GAP_BAZIN1"},
 ]
 
-logging.basicConfig(
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    level=logging.INFO
-)
+logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
 log = logging.getLogger(__name__)
 
 DB_PATH = "dicex.db"
 
-# ================= Database =================
+# ═══════════════════ Database ═══════════════════
 def db():
     c = sqlite3.connect(DB_PATH, check_same_thread=False)
     c.row_factory = sqlite3.Row
@@ -91,7 +82,8 @@ def get_user(uid):
 def create_user(uid, username, first_name, referrer_id=None):
     c = db(); k = c.cursor()
     now = datetime.now().isoformat()
-    k.execute("""INSERT OR IGNORE INTO users(user_id,username,first_name,balance,joined_at,referrer_id)
+    k.execute("""INSERT OR IGNORE INTO users
+        (user_id,username,first_name,balance,joined_at,referrer_id)
         VALUES(?,?,?,?,?,?)""",
         (uid, username or "", first_name or "", START_BALANCE, now, referrer_id))
     if k.rowcount > 0 and referrer_id:
@@ -131,12 +123,12 @@ def get_stats():
     k.execute("SELECT COALESCE(SUM(bet_amount),0) s FROM games"); s["bets"] = k.fetchone()["s"]
     k.execute("SELECT COALESCE(SUM(reward),0) s FROM games WHERE result='win'"); s["rewards"] = k.fetchone()["s"]
     k.execute("SELECT COUNT(*) c FROM referrals"); s["refs"] = k.fetchone()["c"]
-    k.execute("SELECT COALESCE(SUM(balance),0) s FROM users"); s["bal_total"] = k.fetchone()["s"]
+    k.execute("SELECT COALESCE(SUM(balance),0) s FROM users"); s["bal"] = k.fetchone()["s"]
     c.close(); return s
 
 def is_admin(uid): return uid in ADMIN_IDS
 
-# ================= Games =================
+# ═══════════════════ Games ═══════════════════
 class G(Enum):
     DICE = "dice"
     BOWLING = "bowling"
@@ -153,7 +145,7 @@ GAME_ALIASES = {
 PERSIAN_TO_EN = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 def normalize_digits(s): return s.translate(PERSIAN_TO_EN)
 
-def parse_game_cmd(text: str):
+def parse_game_cmd(text):
     text = normalize_digits(text.strip())
     parts = text.split()
     if len(parts) == 2:
@@ -174,7 +166,7 @@ def parse_game_cmd(text: str):
     if not (MIN_BET <= bet <= MAX_BET): return None
     return game, count, bet
 
-# ================= Helpers =================
+# ═══════════════════ Helpers ═══════════════════
 def fmt(n): return f"{n:,}"
 
 def safe(s):
@@ -183,7 +175,7 @@ def safe(s):
         s = s.replace(ch, f"\\{ch}")
     return s
 
-async def ensure_user(update: Update):
+async def ensure_user(update):
     u = update.effective_user
     if u:
         create_user(u.id, u.username, u.first_name)
@@ -193,7 +185,7 @@ async def roll_dice(context, chat_id, game):
     msg = await context.bot.send_dice(chat_id=chat_id, emoji=EMOJI[game])
     return msg.dice.value
 
-# ================= Keyboards =================
+# ═══════════════════ Keyboards ═══════════════════
 def private_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("💰 موجودی", callback_data="u:balance"),
@@ -228,8 +220,8 @@ def join_channels_kb():
 
 def admin_panel():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 آمار ربات", callback_data="adm:stats")],
-        [InlineKeyboardButton("👥 لیست کاربران", callback_data="adm:users")],
+        [InlineKeyboardButton("📊 آمار", callback_data="adm:stats")],
+        [InlineKeyboardButton("👥 کاربران", callback_data="adm:users")],
         [InlineKeyboardButton("➕ افزایش امتیاز", callback_data="adm:add")],
         [InlineKeyboardButton("➖ کاهش امتیاز", callback_data="adm:rem")],
         [InlineKeyboardButton("📢 پیام همگانی", callback_data="adm:bc")],
@@ -239,7 +231,7 @@ def admin_panel():
 def admin_back():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data="adm:panel")]])
 
-# ================= Membership =================
+# ═══════════════════ Membership ═══════════════════
 async def check_membership(context, user_id):
     for ch in FORCE_CHANNELS:
         try:
@@ -247,8 +239,8 @@ async def check_membership(context, user_id):
             if m.status in ("left", "kicked"):
                 return False
         except Exception as e:
-            log.warning(f"عضویت چک نشد {ch['username']}: {e}")
-            return True  # اگه خطا داد (ربات ادمین نیست)، رد کن
+            log.warning(f"check membership {ch['username']}: {e}")
+            return True  # اگه ربات ادمین نیست، رد کن
     return True
 
 async def require_membership(update, context):
@@ -266,26 +258,27 @@ async def require_membership(update, context):
         await context.bot.send_message(chat_id=u.id, text=txt,
             reply_markup=join_channels_kb(), parse_mode=ParseMode.MARKDOWN,
             disable_web_page_preview=True)
-        if update.effective_chat.type != ChatType.PRIVATE:
-            try:
-                await update.effective_message.reply_text(
-                    f"🔒 {safe(u.first_name)} جان، برای بازی پیوی ربات رو چک کن!")
-            except: pass
-    except: pass
+    except:
+        try:
+            await update.effective_message.reply_text(txt,
+                reply_markup=join_channels_kb(), parse_mode=ParseMode.MARKDOWN,
+                disable_web_page_preview=True)
+        except: pass
     return False
 
 async def check_join_cb(update, context):
     q = update.callback_query
     if await check_membership(context, q.from_user.id):
-        await q.answer("✅ تأیید شد! حالا برو گروه بنویس: 1 تاس 100", show_alert=True)
+        await q.answer("✅ تأیید شد!", show_alert=True)
         try:
-            await q.edit_message_text("✅ **عضویتت تأیید شد!**\n\nبرو تو گروه بنویس:\n`1 تاس 100`",
-                                      parse_mode=ParseMode.MARKDOWN)
+            await q.edit_message_text(
+                "✅ **عضویتت تأیید شد!**\n\nبرو گروه بنویس:\n`1 تاس 100`",
+                parse_mode=ParseMode.MARKDOWN)
         except: pass
     else:
         await q.answer("❌ هنوز عضو نشدی!", show_alert=True)
 
-# ================= Text builders =================
+# ═══════════════════ Text builders ═══════════════════
 def build_roll_text(st):
     lines = [f"🎮 **{NAME_FA[st['game']]}** {EMOJI[st['game']]} — " +
              ("بازی دوستانه" if st["mode"] == "fr" else "بازی با ربات"), ""]
@@ -326,9 +319,9 @@ def build_waiting_text(st):
         f"👥 **{NAME_FA[st['game']]}** {EMOJI[st['game']]} — بازی دوستانه\n\n"
         f"🎯 **{st['creator_name']}** رول کرد، امتیاز: **{sum(st['creator_rolls'])}**\n"
         f"💰 شرط: **{fmt(st['bet'])}** {UNIT}\n\n"
-        f"کی می‌خواد به چالش بکشه؟ 🤝\n"
+        f"کی به چالش می‌کشه؟ 🤝\n"
         f"(ببر → **{fmt(st['bet']*2)}** {UNIT})\n\n"
-        f"⏰ ۲ دقیقه دیگه منقضی می‌شه."
+        f"⏰ ۲ دقیقه"
     )
 
 async def auto_cancel_after(context, gid, seconds):
@@ -341,51 +334,82 @@ async def auto_cancel_after(context, gid, seconds):
     try:
         await context.bot.edit_message_text(
             chat_id=st["chat_id"], message_id=st["message_id"],
-            text="⏰ چالش منقضی شد و شرط برگشت داده شد.")
+            text="⏰ چالش منقضی شد و شرط برگشت.")
     except: pass
     context.bot_data["games"].pop(gid, None)
 
-# ================= Commands =================
-async def cmd_start(update, context):
-    u = await ensure_user(update)
-    if not u: return
+# ═══════════════════ START — مهم ═══════════════════
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
     chat = update.effective_chat
 
-    if chat.type == ChatType.PRIVATE:
-        ref_id = None
-        if context.args and context.args[0].startswith("ref_"):
-            try: ref_id = int(context.args[0][4:])
+    # ساخت کاربر توی دیتابیس
+    referrer_id = None
+    if context.args and len(context.args) > 0:
+        arg = context.args[0]
+        if arg.startswith("ref_"):
+            try: referrer_id = int(arg[4:])
             except: pass
-        if ref_id:
-            create_user(u.id, u.username, u.first_name, ref_id)
 
-        if not await require_membership(update, context): return
+    create_user(user.id, user.username, user.first_name, referrer_id)
 
-        bal = get_balance(u.id)
-        text = (
-            f"👋 سلام **{safe(u.first_name)}**!\n\n"
-            "به **«داگز موج بات»** خوش اومدی 🎉\n\n"
-            f"💰 موجودی: **{fmt(bal)} {UNIT}**\n\n"
-            "⚠️ بازی‌ها فقط توی **گروه** انجام می‌شن.\n"
-            "برو تو گروه و بنویس:\n"
-            "`1 تاس 100`\n`2 بولینگ 500`\n`3 دارت 1000`"
-        )
-        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=private_menu())
-    else:
-        await update.message.reply_text("👋 برای بازی بنویس:\n`1 تاس 100`", parse_mode=ParseMode.MARKDOWN)
+    # ═══ گروه ═══
+    if chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
+        try:
+            await update.message.reply_text(
+                "🎲 سلام! برای بازی اینطوری بنویس:\n\n"
+                "`1 تاس 100`\n`2 بولینگ 500`\n`3 دارت 1000`\n\n"
+                "یا بنویس `بازی‌ها` / `موجودی`",
+                parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            log.error(f"group start: {e}")
+        return
 
+    # ═══ پیوی ═══
+    if not await require_membership(update, context):
+        return
+
+    bal = get_balance(user.id)
+    text = (
+        f"👋 سلام **{safe(user.first_name)}** عزیز!\n\n"
+        "به **«داگز موج بات»** خوش اومدی 🎉\n\n"
+        f"💰 موجودی: **{fmt(bal)}** {UNIT}\n\n"
+        "🎮 **بازی‌ها:**\n"
+        "🎲 تاس | 🎳 بولینگ | 🎯 دارت\n\n"
+        "⚠️ بازی‌ها فقط توی **گروه** انجام می‌شن.\n"
+        "برو تو گروه و اینطوری بنویس:\n\n"
+        "`1 تاس 100`\n`2 بولینگ 500`\n`3 دارت 1000`\n\n"
+        f"💰 شرط: **{fmt(MIN_BET)}** تا **{fmt(MAX_BET)}** {UNIT}\n"
+        f"💸 برداشت: حداقل **{fmt(MIN_WITHDRAW)}** {UNIT}\n\n"
+        "📋 /help — راهنما\n"
+        "👤 /profile — پروفایل\n"
+        "🎁 /referral — زیرمجموعه"
+    )
+
+    try:
+        await update.message.reply_text(
+            text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=private_menu())
+    except Exception as e:
+        log.error(f"start private error: {e}")
+        # بدون مارک‌داون بفرست
+        await update.message.reply_text(text, reply_markup=private_menu())
+
+# ═══════════════════ Commands ═══════════════════
 async def cmd_help(update, context):
     text = (
         "📖 **راهنمای داگز موج بات**\n\n"
         "🎲 **بازی‌ها:** تاس / بولینگ / دارت\n"
         f"🎯 سقف پرتاب: **{MAX_ROLLS}**\n\n"
-        "✍️ **نحوه ساخت بازی:**\n"
+        "✍️ **ساخت بازی (در گروه):**\n"
         "`1 تاس 100`\n`2 بولینگ 500`\n`3 دارت 1000`\n\n"
         f"💰 حداقل: **{fmt(MIN_BET)}** | حداکثر: **{fmt(MAX_BET)}** {UNIT}\n\n"
-        "🎮 دو حالت: 🤖 با ربات | 👥 با دوستان\n\n"
-        "💠 **دستورات:** /start /help /balance /profile /referral\n\n"
-        "👥 **در گروه:** `موجودی` / `م` / `بازی‌ها`\n\n"
-        f"💸 حداقل برداشت: **{fmt(MIN_WITHDRAW)}** {UNIT}\n"
+        "🎮 دو حالت:\n🤖 بازی با ربات\n👥 بازی با دوستان\n\n"
+        "💠 **دستورات پیوی:**\n"
+        "/start /help /balance /profile /referral\n\n"
+        "👥 **گروه:** `موجودی` / `م` / `بازی‌ها`\n\n"
+        f"💸 برداشت: **{fmt(MIN_WITHDRAW)}** {UNIT}\n"
         f"📢 کانال: {CHANNEL_USERNAME}"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
@@ -393,7 +417,9 @@ async def cmd_help(update, context):
 async def cmd_balance(update, context):
     u = await ensure_user(update)
     if not await require_membership(update, context): return
-    await update.message.reply_text(f"💰 موجودی: **{fmt(get_balance(u.id))}** {UNIT}", parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(
+        f"💰 موجودی: **{fmt(get_balance(u.id))}** {UNIT}",
+        parse_mode=ParseMode.MARKDOWN)
 
 async def cmd_profile(update, context):
     u = await ensure_user(update)
@@ -404,8 +430,8 @@ async def cmd_profile(update, context):
         f"👤 **پروفایل {safe(u.first_name)}**\n\n"
         f"🆔 آیدی: `{u.id}`\n"
         f"💰 موجودی: **{fmt(row['balance'])}** {UNIT}\n"
-        f"🎮 تعداد بازی: **{row['total_bets']}**\n"
-        f"🏆 بردها: **{row['total_wins']}**\n"
+        f"🎮 بازی: **{row['total_bets']}**\n"
+        f"🏆 برد: **{row['total_wins']}**\n"
         f"📈 نرخ برد: **{wr}%**"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
@@ -419,14 +445,14 @@ async def cmd_referral(update, context):
     k.execute("SELECT COUNT(*) c FROM referrals WHERE referrer_id=?", (u.id,))
     cnt = k.fetchone()["c"]; c.close()
     await update.message.reply_text(
-        f"🎁 **زیرمجموعه‌ها:** {cnt} نفر\n\n🔗 لینک دعوت:\n`{link}`\n\n"
-        f"هر نفر **۱۰۰ {UNIT}** 🎉",
+        f"🎁 **زیرمجموعه‌ها:** {cnt} نفر\n\n🔗 لینک:\n`{link}`\n\n"
+        f"هر نفر **۱۰۰ {UNIT}**",
         parse_mode=ParseMode.MARKDOWN)
 
 async def cmd_language(update, context):
-    await update.message.reply_text("🌐 زبان فعلی: **فارسی**", parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text("🌐 زبان: **فارسی**", parse_mode=ParseMode.MARKDOWN)
 
-# ================= Group router =================
+# ═══════════════════ Group router ═══════════════════
 async def group_text_router(update, context):
     txt = (update.message.text or "").strip()
     u = await ensure_user(update)
@@ -434,12 +460,14 @@ async def group_text_router(update, context):
     norm = normalize_digits(txt)
 
     if norm == "موجودی":
-        await update.message.reply_text(f"💰 موجودی: **{fmt(get_balance(u.id))}** {UNIT}",
-                                        parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(
+            f"💰 موجودی: **{fmt(get_balance(u.id))}** {UNIT}",
+            parse_mode=ParseMode.MARKDOWN)
         return
     if norm == "م":
-        await update.message.reply_text(f"💰 **{fmt(get_balance(u.id))}** {UNIT}",
-                                        parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(
+            f"💰 **{fmt(get_balance(u.id))}** {UNIT}",
+            parse_mode=ParseMode.MARKDOWN)
         return
     if norm in ("بازی‌ها", "بازیها", "بازیا", "بازی ها"):
         await update.message.reply_text(
@@ -477,12 +505,12 @@ async def start_game_from_command(update, context, parsed, u):
         f"🎲 تعداد پرتاب: **{count}**\n"
         f"👤 سازنده: **{safe(u.first_name)}**\n"
         f"💼 موجودی: **{fmt(bal)}** {UNIT}\n\n"
-        f"👇 حالت بازی رو انتخاب کن:"
+        f"👇 حالت رو انتخاب کن:"
     )
-    await update.message.reply_text(text, reply_markup=mode_kb(game, count, bet),
-                                    parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(
+        text, reply_markup=mode_kb(game, count, bet), parse_mode=ParseMode.MARKDOWN)
 
-# ================= Callbacks =================
+# ═══════════════════ Callbacks ═══════════════════
 async def init_cb(update, context):
     q = update.callback_query
     u = await ensure_user(update)
@@ -532,13 +560,13 @@ async def roll_cb(update, context):
     u = await ensure_user(update)
 
     if not await check_membership(context, q.from_user.id):
-        await q.answer("🔒 اول عضو کانال‌ها شو!", show_alert=True)
+        await q.answer("🔒 اول عضو شو!", show_alert=True)
         return
 
     gid = q.data.split(":", 1)[1]
     st = context.bot_data.get("games", {}).get(gid)
     if not st:
-        await q.answer("❌ بازی پیدا نشد.", show_alert=True)
+        await q.answer("❌ پیدا نشد.", show_alert=True)
         return
 
     if st["phase"] == "creator_rolling":
@@ -552,7 +580,7 @@ async def roll_cb(update, context):
             return
         who = "opponent"
     else:
-        await q.answer("این بازی در حال انجام نیست.", show_alert=True)
+        await q.answer("در حال انجام نیست.", show_alert=True)
         return
 
     if who == "creator" and not st.get("bet_paid"):
@@ -560,8 +588,6 @@ async def roll_cb(update, context):
         if bal < st["bet"]:
             await q.answer("❌ موجودی کافی نداری!", show_alert=True)
             context.bot_data["games"].pop(gid, None)
-            try: await q.edit_message_text("❌ بازی لغو شد (موجودی کافی نبود).")
-            except: pass
             return
         add_balance(u.id, -st["bet"])
         st["bet_paid"] = True
@@ -585,8 +611,9 @@ async def roll_cb(update, context):
     if st["phase"] == "creator_rolling":
         if st["mode"] == "bot":
             st["phase"] = "bot_turn"
-            try: await q.edit_message_text(build_roll_text(st) + "\n\n🤖 ربات داره می‌ریزه...",
-                                           parse_mode=ParseMode.MARKDOWN)
+            try:
+                await q.edit_message_text(build_roll_text(st) + "\n\n🤖 ربات داره می‌ریزه...",
+                                          parse_mode=ParseMode.MARKDOWN)
             except: pass
             for _ in range(need):
                 v = await roll_dice(context, st["chat_id"], st["game"])
@@ -595,8 +622,9 @@ async def roll_cb(update, context):
             await finish_game(context, q, st, gid)
         else:
             st["phase"] = "waiting_join"
-            try: await q.edit_message_text(build_waiting_text(st),
-                reply_markup=join_kb(gid), parse_mode=ParseMode.MARKDOWN)
+            try:
+                await q.edit_message_text(build_waiting_text(st),
+                    reply_markup=join_kb(gid), parse_mode=ParseMode.MARKDOWN)
             except: pass
             asyncio.create_task(auto_cancel_after(context, gid, CHALLENGE_TIMEOUT))
         return
@@ -609,7 +637,7 @@ async def join_cb(update, context):
     u = await ensure_user(update)
 
     if not await check_membership(context, q.from_user.id):
-        await q.answer("🔒 اول عضو کانال‌ها شو!", show_alert=True)
+        await q.answer("🔒 اول عضو شو!", show_alert=True)
         return
 
     gid = q.data.split(":", 1)[1]
@@ -640,15 +668,14 @@ async def cancel_cb(update, context):
     u = await ensure_user(update)
     gid = q.data.split(":", 1)[1]
     st = context.bot_data.get("games", {}).get(gid)
-    if not st:
-        await q.answer("پیدا نشد."); return
+    if not st: await q.answer("پیدا نشد."); return
     if st["creator_id"] != u.id:
         await q.answer("فقط سازنده!", show_alert=True); return
     if st.get("bet_paid"):
         add_balance(st["creator_id"], st["bet"])
     context.bot_data["games"].pop(gid, None)
     await q.answer("لغو شد.")
-    try: await q.edit_message_text("❌ لغو شد و شرط برگشت.")
+    try: await q.edit_message_text("❌ لغو و شرط برگشت.")
     except: pass
 
 async def finish_game(context, q, st, gid):
@@ -689,7 +716,7 @@ async def finish_game(context, q, st, gid):
         lines.append(f"💰 **{fmt(st['bet']*2)}** {UNIT} اضافه شد!")
     elif result == "loss":
         lines.append(f"🏆 برنده: **{winner_name}** 🎉")
-        lines.append(f"😢 **{st['creator_name']}** باختی، دفعه بعد!")
+        lines.append(f"😢 **{st['creator_name']}** باختی!")
     else:
         lines.append("🤝 مساوی! شرط برگشت.")
 
@@ -723,7 +750,7 @@ async def user_info_cb(update, context):
     elif data == "u:withdraw":
         bal = get_balance(u.id)
         if bal < MIN_WITHDRAW:
-            await q.answer(f"❌ حداقل {fmt(MIN_WITHDRAW)} {UNIT}\nموجودی: {fmt(bal)}", show_alert=True)
+            await q.answer(f"❌ حداقل {fmt(MIN_WITHDRAW)}\nموجودی: {fmt(bal)}", show_alert=True)
             return
         c = db(); k = c.cursor()
         k.execute("INSERT INTO withdrawals(user_id,amount,created_at) VALUES(?,?,?)",
@@ -733,19 +760,19 @@ async def user_info_cb(update, context):
         await q.answer(f"✅ درخواست {fmt(bal)} {UNIT} ثبت شد!", show_alert=True)
         for aid in ADMIN_IDS:
             try: await context.bot.send_message(aid,
-                f"💸 برداشت جدید:\n👤 {u.first_name} (`{u.id}`)\n💰 {fmt(bal)} {UNIT}",
+                f"💸 برداشت:\n👤 {u.first_name} (`{u.id}`)\n💰 {fmt(bal)} {UNIT}",
                 parse_mode=ParseMode.MARKDOWN)
             except: pass
 
-# ================= Admin =================
+# ═══════════════════ Admin ═══════════════════
 async def cmd_admin(update, context):
     u = await ensure_user(update)
     if not is_admin(u.id):
         await update.message.reply_text("⛔️ دسترسی نداری."); return
     if update.effective_chat.type != ChatType.PRIVATE:
-        await update.message.reply_text("فقط در پیوی."); return
-    await update.message.reply_text("🛠 **پنل مدیریت**", reply_markup=admin_panel(),
-                                    parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text("فقط پیوی."); return
+    await update.message.reply_text("🛠 **پنل مدیریت**",
+                                    reply_markup=admin_panel(), parse_mode=ParseMode.MARKDOWN)
 
 async def admin_cb(update, context):
     q = update.callback_query
@@ -756,8 +783,8 @@ async def admin_cb(update, context):
 
     if data == "adm:panel":
         await q.answer()
-        await q.edit_message_text("🛠 **پنل مدیریت**", reply_markup=admin_panel(),
-                                  parse_mode=ParseMode.MARKDOWN); return
+        await q.edit_message_text("🛠 **پنل مدیریت**",
+            reply_markup=admin_panel(), parse_mode=ParseMode.MARKDOWN); return
     if data == "adm:close":
         await q.answer()
         await q.edit_message_text("✅ بسته شد."); return
@@ -768,7 +795,7 @@ async def admin_cb(update, context):
                f"💠 شرط: **{fmt(s['bets'])} {UNIT}**\n"
                f"🏆 جوایز: **{fmt(s['rewards'])} {UNIT}**\n"
                f"🎁 زیرمجموعه: **{fmt(s['refs'])}**\n"
-               f"💰 موجودی کل: **{fmt(s['bal_total'])} {UNIT}**")
+               f"💰 موجودی کل: **{fmt(s['bal'])} {UNIT}**")
         await q.answer()
         await q.edit_message_text(txt, reply_markup=admin_back(), parse_mode=ParseMode.MARKDOWN); return
     if data == "adm:users":
@@ -782,17 +809,17 @@ async def admin_cb(update, context):
         context.user_data["admin_action"] = "add"
         await q.answer()
         await q.edit_message_text("➕ آیدی و مقدار:\n`123456789 500`",
-                                  reply_markup=admin_back(), parse_mode=ParseMode.MARKDOWN); return
+            reply_markup=admin_back(), parse_mode=ParseMode.MARKDOWN); return
     if data == "adm:rem":
         context.user_data["admin_action"] = "rem"
         await q.answer()
         await q.edit_message_text("➖ آیدی و مقدار:\n`123456789 200`",
-                                  reply_markup=admin_back(), parse_mode=ParseMode.MARKDOWN); return
+            reply_markup=admin_back(), parse_mode=ParseMode.MARKDOWN); return
     if data == "adm:bc":
         context.user_data["admin_action"] = "bc"
         await q.answer()
-        await q.edit_message_text("📢 متن پیام:", reply_markup=admin_back(),
-                                  parse_mode=ParseMode.MARKDOWN); return
+        await q.edit_message_text("📢 متن پیام:",
+            reply_markup=admin_back(), parse_mode=ParseMode.MARKDOWN); return
 
 async def admin_text(update, context):
     u = update.effective_user
@@ -810,17 +837,15 @@ async def admin_text(update, context):
             await update.message.reply_text("❌ مثال: `123456789 500`", parse_mode=ParseMode.MARKDOWN); return
         tid, amt = int(parts[0]), int(parts[1])
         if not get_user(tid):
-            await update.message.reply_text("❌ کاربر پیدا نشد."); return
+            await update.message.reply_text("❌ کاربر نیست."); return
         if action == "add":
             add_balance(tid, amt)
-            await update.message.reply_text(f"✅ {fmt(amt)} {UNIT} به `{tid}` اضافه شد.",
-                                            parse_mode=ParseMode.MARKDOWN)
+            await update.message.reply_text(f"✅ {fmt(amt)} به `{tid}` اضافه شد.", parse_mode=ParseMode.MARKDOWN)
             try: await context.bot.send_message(tid, f"🎁 {fmt(amt)} {UNIT} گرفتی!")
             except: pass
         else:
             add_balance(tid, -amt)
-            await update.message.reply_text(f"✅ {fmt(amt)} {UNIT} از `{tid}` کم شد.",
-                                            parse_mode=ParseMode.MARKDOWN)
+            await update.message.reply_text(f"✅ {fmt(amt)} از `{tid}` کم شد.", parse_mode=ParseMode.MARKDOWN)
         return
 
     if action == "bc":
@@ -830,13 +855,13 @@ async def admin_text(update, context):
         for r in users:
             try:
                 await context.bot.send_message(r["user_id"], f"📢 **اطلاعیه**\n\n{txt}",
-                                               parse_mode=ParseMode.MARKDOWN)
+                    parse_mode=ParseMode.MARKDOWN)
                 sent += 1
             except: failed += 1
             await asyncio.sleep(0.05)
         await update.message.reply_text(f"✅ {sent} | ❌ {failed}")
 
-# ================= Router =================
+# ═══════════════════ Router ═══════════════════
 async def callback_router(update, context):
     data = update.callback_query.data
     if data == "check_join": await check_join_cb(update, context)
@@ -848,7 +873,7 @@ async def callback_router(update, context):
     elif data.startswith("adm:"): await admin_cb(update, context)
 
 async def error_handler(update, context):
-    log.error(f"❌ خطا: {context.error}")
+    log.error(f"❌ خطا: {context.error}", exc_info=context.error)
 
 async def post_init(app):
     me = await app.bot.get_me()
@@ -856,7 +881,6 @@ async def post_init(app):
     print(f"✅ ربات وصل شد: @{me.username}")
     print(f"✅ اسم: {me.first_name}")
     print("=" * 50)
-    log.info(f"✅ ربات آماده: @{me.username}")
     await app.bot.set_my_commands([
         ("start", "شروع"),
         ("help", "راهنما"),
@@ -866,12 +890,14 @@ async def post_init(app):
         ("language", "زبان"),
     ])
 
-# ================= Main =================
+# ═══════════════════ Main ═══════════════════
 def main():
-    print("🚀 در حال راه‌اندازی...")
+    print("🚀 راه‌اندازی...")
     init_db()
+
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
+    # Commands
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("balance", cmd_balance))
@@ -880,17 +906,24 @@ def main():
     app.add_handler(CommandHandler("language", cmd_language))
     app.add_handler(CommandHandler("admin", cmd_admin))
 
+    # Group messages
     app.add_handler(MessageHandler(
-        (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP) & filters.TEXT & ~filters.COMMAND,
+        (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP) &
+        filters.TEXT & ~filters.COMMAND,
         group_text_router))
+
+    # Private messages (فقط برای ادمین)
     app.add_handler(MessageHandler(
         filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
         admin_text))
 
+    # Callbacks
     app.add_handler(CallbackQueryHandler(callback_router))
+
+    # Errors
     app.add_error_handler(error_handler)
 
-    print("🚀 ربات داره اجرا می‌شه... (Ctrl+C برای توقف)")
+    print("🚀 ربات روشن شد! (Ctrl+C برای توقف)")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
